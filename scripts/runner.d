@@ -299,12 +299,12 @@ void integrationTest(string[] exDubOpts = null)
 				dispLog("INFO", entry.baseName, "unittest for " ~ testOpt.name);
 				auto dubArgs = (testOpt.dubArgs.length > 0 ? dubCommonArgs ~ testOpt.dubArgs : dubCommonArgs)
 				             ~ (!no_coverage ? ["-b=unittest-cov", "-c=unittest"] : ["-b=unittest", "-c=unittest"]);
+				dubArgs ~= "--root=" ~ testDir;
 				auto desc = cmd(["dub", "describe", "--verror"] ~ dubArgs, ".", testOpt.env).parseJSON();
 				auto targetExe = buildNormalizedPath(
 					desc["packages"][0]["path"].str,
 					desc["packages"][0]["targetPath"].str,
 					desc["packages"][0]["targetFileName"].str);
-				dubArgs ~= "--root=" ~ testDir;
 				exec(["dub", "build"] ~ dubArgs, testOpt.buildWorkDir, testOpt.env);
 				auto exeArgs = (!no_coverage ? covopt : null);
 				exec([targetExe] ~ exeArgs, testOpt.runWorkDir, testOpt.env);
