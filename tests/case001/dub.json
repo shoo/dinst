@@ -1,0 +1,14 @@
+{
+	"name": "case001",
+	"sourcePaths": ["src"],
+	"importPaths": ["."],
+	"configurations": [
+		{
+			"name": "unittest",
+			"targetType": "library",
+			"dependencies": {
+				"dinst": { "path": "../.." }
+			}
+		}
+	]
+}

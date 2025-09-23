@@ -1,0 +1,131 @@
+name: Release
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  # No. OS      ARCH    COMPILER   UT  TT  BLD DOC
+  #  2. Windows x86     ldc        x   o   O   x
+  #  6. Windows x86_64  ldc        o   o   O   x
+  # 14. Ubuntu  x86_64  ldc        o   o   O   o
+  # 22. macOS   x86_64  ldc        o   o   O   o
+
+  # No. OS      ARCH    COMPILER   UT  TT  BLD DOC
+  #  2. Windows x86     ldc        x   o   O   x
+  create-windows-x86:
+    name: create-windows-x86
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install D compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-latest
+
+  # No. OS      ARCH    COMPILER   UT  TT  BLD DOC
+  #  6. Windows x86_64  ldc        o   o   O   x
+  create-windows-x86_64:
+    name: create-windows-x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install D compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-latest
+
+  # No. OS      ARCH    COMPILER   UT  TT  BLD DOC
+  # 14. Ubuntu  x86_64  ldc        o   o   O   o
+  create-linux-x86_64:
+    name: create-linux-x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install D compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-latest
+      - name: Generate document
+        run: rdmd ./scripts/runner.d -a=x86_64 --mode=generate-document
+      - name: Create archive
+        id: create_archive
+        run: rdmd ./scripts/runner.d -a=x86_64 --mode=create-archive
+      - name: Upload generated pages
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs
+          path: ${{ steps.create_archive.outputs.DOCARCNAME }}
+          include-hidden-files: true
+
+  # No. OS      ARCH    COMPILER   UT  TT  BLD DOC
+  # 22. macOS   x86_64  ldc        o   o   O   o
+  create-macos13-x86_64:
+    name: create-macos13-x86_64
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install D compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-latest
+      - name: Build binary
+        run: dub build -a=x86_64 -b=release --root=examples/arkimg_cli
+      - name: Generate document
+        run: rdmd ./scripts/runner.d -a=x86_64 --mode=generate-document
+      - name: Create archive
+        id: create_archive
+        run: rdmd ./scripts/runner.d -a=x86_64 --mode=create-archive
+      - name: Upload created archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos13-x86_64-binary
+          path: ${{ steps.create_archive.outputs.ARCNAME }}
+          include-hidden-files: true
+
+  # Deploy Pages
+  create-release:
+    name: create-release
+    needs: [create-windows-x86, create-windows-x86_64, create-linux-x86_64, create-macos13-x86_64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Names
+        id: get_names
+        run: |
+          echo ::set-output name=TAGNAME::${GITHUB_REF#refs/tags/}
+          echo ::set-output name=PROJNAME::${GITHUB_REPOSITORY#$GITHUB_ACTOR/}
+      - name: Download document
+        uses: actions/download-artifact@v4
+        with:
+          name: docs
+          path: ./
+      - name: Download windows-x86-binary
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-x86-binary
+          path: ./
+      - name: Download windows-x86_64-binary
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-x86_64-binary
+          path: ./
+      - name: Download linux-x86_64-binary
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64-binary
+          path: ./
+      - name: Download macos13-x86_64-binary
+        uses: actions/download-artifact@v4
+        with:
+          name: macos13-x86_64-binary
+          path: ./
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false

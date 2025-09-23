@@ -1,0 +1,10 @@
+.*
+!.gitignore
+!tests/*/.no_*
+
+*.pdb
+*.exe
+*.lib
+*.bat
+*.sh
+docs

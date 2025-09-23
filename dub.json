@@ -1,0 +1,29 @@
+{
+	"name": "dinst",
+	"authors": [
+		"SHOO"
+	],
+	"description": "Dynamic instrumentation for D unittests.",
+	"copyright": "Copyright © 2017, SHOO",
+	"license": "Zlib",
+	"targetType": "library",
+	"sourcePaths": ["src"],
+	"importPaths": ["src"],
+	"libs": ["capstone"],
+	"lflags-windows-x86_64": ["/LIBPATH:$PACKAGE_DIR/lib/windows-x86_64"],
+	"lflags-windows-x86": ["/LIBPATH:$PACKAGE_DIR/lib/windows-x86"],
+	"lflags-linux-x86_64": ["-L$PACKAGE_DIR/lib/linux-x86_64"],
+	"lflags-linux-x86": ["-L$PACKAGE_DIR/lib/linux-x86"],
+	"lflags-osx-x86_64": ["-L$PACKAGE_DIR/lib/macos-x86"],
+	"buildTypes": {
+		"vscode-debug": { "buildOptions": ["debugMode", "debugInfoC"] },
+		"vscode-debug-ut": { "buildOptions": ["debugMode", "debugInfoC", "unittests"] },
+		"vscode-debug-cov": { "buildOptions": ["debugMode", "coverage", "debugInfoC"] },
+		"vscode-debug-ut-cov": { "buildOptions": ["debugMode", "coverage", "debugInfoC", "unittests"] }
+	},
+	"preBuildCommands-windows-x86":    [ "rdmd -m32 scripts/prebuild.d" ],
+	"preBuildCommands-windows-x86_64": [ "rdmd -m64 scripts/prebuild.d" ],
+	"preBuildCommands-linux-x86":      [ "rdmd -m32 scripts/prebuild.d" ],
+	"preBuildCommands-linux-x86_64":   [ "rdmd -m64 scripts/prebuild.d" ],
+	"preBuildCommands-osx-x86_64":     [ "rdmd -m64 scripts/prebuild.d" ]
+}
