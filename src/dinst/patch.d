@@ -165,6 +165,80 @@ bool writeRelJump(void* where, void* target)
 }
 
 /*******************************************************************************
+ * 単純ジャンプ版トランポリン作成
+ */
+bool writeAbsJmp32(void* where, void* target)
+{
+	version (X86)
+	{
+		union Dat
+		{
+			ubyte[10] stub;
+			struct MovDat1
+			{
+			align(1):
+				ushort jmp;
+				uint   addr1;
+				uint   addr2;
+			}
+			MovDat1 mov1;
+			struct MovDat2
+			{
+			align(1):
+				ulong  high;
+				ushort low;
+			}
+			MovDat2 mov2;
+		}
+		ubyte* jmpBuf = cast(ubyte*)where;
+		size_t addrJmpBuf = cast(size_t)&jmpBuf[6];
+		size_t addrJmpTo = cast(size_t)target;
+		Dat patch;
+		patch.mov1 = Dat.MovDat1(0x25FF, cast(uint)addrJmpBuf, cast(uint)addrJmpTo);
+		
+		version (Windows)
+		{
+			import core.sys.windows.windows;
+			DWORD tmp;
+			// VirtualProtect はページ単位で保護を変更するが、先頭アドレスを渡せば OK
+			if (!VirtualProtect(where, 5, PAGE_EXECUTE_READWRITE, &tmp))
+				return false;
+			(cast(Dat*)where).mov2.high = patch.mov2.high;
+			(cast(Dat*)where).mov2.low  = patch.mov2.low;
+			// 保護を元に戻す
+			VirtualProtect(where, 5, tmp, &tmp);
+			
+			// 命令キャッシュをフラッシュして CPU が新しい命令を読むようにする
+			FlushInstructionCache(GetCurrentProcess(), where, 5);
+		}
+		else version (Posix)
+		{
+			import core.sys.posix.sys.mman;
+			import core.sys.posix.unistd;
+			auto pagesize = sysconf(_SC_PAGESIZE);
+			if (pagesize <= 0)
+				pagesize = 4096;
+			auto pageStart = cast(size_t)where & ~(pagesize - 1);
+			if (mprotect(cast(void*)pageStart, pagesize, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+				return false;
+			(cast(Dat*)where).mov2.high = patch.mov2.high;
+			(cast(Dat*)where).mov2.low  = patch.mov2.low;
+			cast(void)mprotect(cast(void*)pageStart, pagesize, PROT_READ | PROT_EXEC);
+			version (LDC)
+			{
+				import ldc.intrinsics;
+				llvm_clear_cache(where, (cast(ubyte*)where) + 5);
+			}
+		}
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+/*******************************************************************************
  * トランポリン作成
  * 
  * original の先頭 stolen をコピーし、コピー末尾に戻りジャンプ (original + stolen) を付加する
@@ -193,12 +267,20 @@ bool createTrampoline32(void* original, size_t stolen, ubyte[] tramp)
 	
 	// tramp の末尾に戻りジャンプを書く (absolute jump to original + stolen)
 	void* returnAddr = cast(ubyte*)original + stolen;
-	return writeRelJump(tramp.ptr + stolen, returnAddr);
+	return writeAbsJmp32(tramp.ptr + stolen, returnAddr);
 }
 
 /*******************************************************************************
  * 単純ジャンプ版トランポリン作成
+ * 
+ * original の先頭 stolen をコピーし、コピー末尾に戻りジャンプ (original + stolen) を付加する
  */
+bool createTrampoline32Jmp(void* jmpTo, ubyte[] tramp)
+{
+	return writeAbsJmp32(tramp.ptr, jmpTo);
+}
+
+/// ditto
 bool createTrampoline64Jmp(void* jmpTo, ubyte[] tramp)
 {
 	return writeAbsJump(tramp.ptr, jmpTo);

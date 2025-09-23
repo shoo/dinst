@@ -103,42 +103,43 @@ private:
 			version (X86_64)
 			{
 				_trampolineSize = 12;
+				_createTrampolineMemory();
+				if (!createTrampoline64Jmp(stolen.addr, (cast(ubyte*)_trampoline)[0.._trampolineSize]))
+					return false;
+				if (!writeAbsJump(where, target))
+					return false;
 			}
 			else version (X86)
 			{
-				_trampolineSize = 5;
+				_trampolineSize = 10;
+				_createTrampolineMemory();
+				if (!createTrampoline32Jmp(stolen.addr, (cast(ubyte*)_trampoline)[0.._trampolineSize]))
+					return false;
+				if (!writeRelJump(where, target))
+					return false;
 			}
-			_createTrampolineMemory();
-			if (!createTrampoline64Jmp(stolen.addr, (cast(ubyte*)_trampoline)[0.._trampolineSize]))
-				return false;
-			if (!writeAbsJump(where, target))
-				return false;
 			return true;
 		}
 		version (X86_64)
 		{
 			_trampolineSize = stolen.size + 12;
-		}
-		else version (X86)
-		{
-			_trampolineSize = stolen.size + 5;
-		}
-		else static assert(0);
-		_createTrampolineMemory();
-		version (X86_64)
-		{
+			_createTrampolineMemory();
 			if (!createTrampoline64(where, stolen.size, (cast(ubyte*)_trampoline)[0.._trampolineSize]))
+				return false;
+			if (!writeRelJump(where, target))
 				return false;
 		}
 		else version (X86)
 		{
+			_trampolineSize = stolen.size + 10;
+			_createTrampolineMemory();
 			if (!createTrampoline32(where, stolen.size, (cast(ubyte*)_trampoline)[0.._trampolineSize]))
+				return false;
+			if (!writeRelJump(where, target))
 				return false;
 		}
 		else static assert(0);
 		
-		if (!writeRelJump(where, target))
-			return false;
 		return true;
 	}
 	
@@ -146,18 +147,27 @@ private:
 	{
 		_original   = where;
 		_hookTarget = target;
-		size_t diffAddress = where < target ? target - where : where - target;
-		
-		if (diffAddress > int.max)
-		{
-			if (!_createJmp64(where, target))
-				return false;
-		}
-		else
+		version (X86)
 		{
 			if (!_createJmp32(where, target))
 				return false;
 		}
+		else version (X86_64)
+		{
+			size_t diffAddress = where < target ? target - where : where - target;
+			
+			if (diffAddress > int.max)
+			{
+				if (!_createJmp64(where, target))
+					return false;
+			}
+			else
+			{
+				if (!_createJmp32(where, target))
+					return false;
+			}
+		}
+		else static assert(0);
 		_mutex = new Mutex;
 		return true;
 	}
@@ -401,6 +411,7 @@ SetupHook!func setupHook(alias func)() @trusted
 		}
 	}
 	auto hookFoo = setupHook!(C.foo);
+	
 	auto c = new C;
 	c.x = 10;
 	assert(c.foo(3, 5) == 18);

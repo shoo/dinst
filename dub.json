@@ -14,7 +14,7 @@
 	"lflags-windows-x86": ["/LIBPATH:$PACKAGE_DIR/lib/windows-x86"],
 	"lflags-linux-x86_64": ["-L$PACKAGE_DIR/lib/linux-x86_64"],
 	"lflags-linux-x86": ["-L$PACKAGE_DIR/lib/linux-x86"],
-	"lflags-osx-x86_64": ["-L$PACKAGE_DIR/lib/macos-x86"],
+	"lflags-osx-x86_64": ["-L$PACKAGE_DIR/lib/macos-x86_64"],
 	"buildTypes": {
 		"vscode-debug": { "buildOptions": ["debugMode", "debugInfoC"] },
 		"vscode-debug-ut": { "buildOptions": ["debugMode", "debugInfoC", "unittests"] },
