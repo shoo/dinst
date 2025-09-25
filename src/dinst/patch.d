@@ -359,12 +359,12 @@ Stolen determineStolenBytes(void* funcAddr, size_t maxRequiredLen = 12)
 		enum X86_INS_RETFQ = 352;
 		enum X86_INS_JMP = 172;
 		acc += insn[i].size;
-		//import std.stdio, core.stdc.string;
-		//writefln("[%d] %s %s  / size = %d",
-		//	acc,
-		//	insn[i].mnemonic[0..strlen(insn[i].mnemonic.ptr)],
-		//	insn[i].op_str[0..strlen(insn[i].op_str.ptr)],
-		//	insn[i].size);
+		import std.stdio, core.stdc.string;
+		writefln("[%d] %s %s  / size = %d",
+			acc,
+			insn[i].mnemonic[0..strlen(insn[i].mnemonic.ptr)],
+			insn[i].op_str[0..strlen(insn[i].op_str.ptr)],
+			insn[i].size);
 		if (acc >= maxRequiredLen)
 		{
 			if (insn[i].id == X86_INS_RET || insn[i].id == X86_INS_RETF || insn[i].id == X86_INS_RETFQ)
