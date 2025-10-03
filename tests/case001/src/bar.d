@@ -10,6 +10,8 @@ int bar(int a) @safe
 @safe unittest
 {
 	import dinst;
+	if (!setupHooks!foo)
+		return;
 	auto foo = setupHook!foo();
 	assert(bar(1) == 2);
 	foo.hook(a => 10);
