@@ -3,6 +3,7 @@ module dinst.dinst;
 import std.stdio;
 import std.traits;
 import dinst.patch;
+import dinst.arch;
 
 private enum bool isMethod(alias func) = (false
 	|| is(__traits(parent, func) == struct)
@@ -239,7 +240,7 @@ bool createHook(alias func)()
 /*******************************************************************************
  * 
  */
-void setHookFunc(alias func)(ReturnType!func delegate(Parameters!func) dg)
+void setHookFunc(alias func)(ReturnType!func delegate(Parameters!func) dg) @trusted
 if (!isMethod!func)
 {
 	auto hook = func.mangleof in g_hooks;
@@ -249,7 +250,7 @@ if (!isMethod!func)
 		hook._callback = *cast(DgType*)cast(void*)&dg;
 }
 /// ditto
-void setHookFunc(alias func)(ReturnType!func delegate(ParentRef!func, Parameters!func) dg)
+void setHookFunc(alias func)(ReturnType!func delegate(ParentRef!func, Parameters!func) dg) @trusted
 if (isMethod!func)
 {
 	auto hook = func.mangleof in g_hooks;
@@ -263,14 +264,14 @@ if (isMethod!func)
 		hook._callback = *cast(DgType*)cast(void*)&callback;
 }
 /// ditto
-void setHookFunc(alias func)(ReturnType!func function(Parameters!func) dg)
+void setHookFunc(alias func)(ReturnType!func function(Parameters!func) dg) @trusted
 if (!isMethod!func)
 {
 	import std.functional;
 	setHookFunc!func(toDelegate(dg));
 }
 /// ditto
-void setHookFunc(alias func)(ReturnType!func function(ParentRef!func, Parameters!func) dg)
+void setHookFunc(alias func)(ReturnType!func function(ParentRef!func, Parameters!func) dg) @trusted
 if (isMethod!func)
 {
 	import std.functional;
@@ -280,7 +281,7 @@ if (isMethod!func)
 /*******************************************************************************
  * 
  */
-void clearHookState(alias func)()
+void clearHookState(alias func)() @trusted
 {
 	auto hook = func.mangleof in g_hooks;
 	assert(hook);
@@ -291,7 +292,7 @@ void clearHookState(alias func)()
 /*******************************************************************************
  * 
  */
-ReturnType!func callHookOriginal(alias func)(Parameters!func args)
+ReturnType!func callHookOriginal(alias func)(Parameters!func args) @trusted
 {
 	auto hook = func.mangleof in g_hooks;
 	assert(hook);
@@ -311,8 +312,10 @@ struct SetupHook(alias func)
 {
 private:
 	import core.sync.mutex;
+	import dinst.arch;
+	import core.demangle;
 	Mutex _mutex;
-	void lockMutex()
+	void lockMutex() @trusted
 	{
 		if (_mutex)
 			return;
@@ -324,45 +327,52 @@ private:
 public:
 	shared static this() @trusted
 	{
-		auto res = createHook!func();
-		assert(res, "Failed to setup a hook: " ~ hook.mangleof);
+		cast()createHook!func();
+	}
+	///
+	bool opCast(T: bool)() const
+	{
+		return cast(bool)(func.mangleof in g_hooks);
 	}
 	///
 	~this() @trusted
 	{
-		clearHookState!func();
-		if (_mutex)
-			_mutex.unlock();
+		if (func.mangleof in g_hooks)
+		{
+			clearHookState!func();
+			if (_mutex)
+				_mutex.unlock();
+		}
 	}
 	///
-	ReturnType!func callOrig(Parameters!func args) @trusted
+	ReturnType!func callOrig(Parameters!func args) @safe
 	{
 		return callHookOriginal!func(args);
 	}
 	
 	///
-	void hook()(ReturnType!func function(Parameters!func) fn) @trusted
+	void hook()(ReturnType!func function(Parameters!func) fn) @safe
 	if (!isMethod!func)
 	{
 		lockMutex();
 		return setHookFunc!func(fn);
 	}
 	/// ditto
-	void hook()(ReturnType!func function(ParentRef!func, Parameters!func) fn) @trusted
+	void hook()(ReturnType!func function(ParentRef!func, Parameters!func) fn) @safe
 	if (isMethod!func)
 	{
 		lockMutex();
 		return setHookFunc!func(fn);
 	}
 	/// ditto
-	void hook()(ReturnType!func delegate(Parameters!func) dg) @trusted
+	void hook()(ReturnType!func delegate(Parameters!func) dg) @safe
 	if (!isMethod!func)
 	{
 		lockMutex();
 		return setHookFunc!func(dg);
 	}
 	/// ditto
-	void hook()(ReturnType!func delegate(ParentRef!func, Parameters!func) dg) @trusted
+	void hook()(ReturnType!func delegate(ParentRef!func, Parameters!func) dg) @safe
 	if (isMethod!func)
 	{
 		lockMutex();
@@ -376,6 +386,18 @@ SetupHook!func setupHook(alias func)() @trusted
 	return SetupHook!func();
 }
 
+bool setupHooks(funcs...)() @trusted
+{
+	if (!isSupported)
+		return false;
+	bool ret = true;
+	static foreach (alias f; funcs)
+	{{
+		ret &= cast(bool)setupHook!f;
+		assert(ret, "Failed to setup: " ~ fullyQualifiedName!f);
+	}}
+	return true;
+}
 
 @safe unittest
 {
@@ -387,6 +409,8 @@ SetupHook!func setupHook(alias func)() @trusted
 	{
 		return a * b;
 	}
+	if (!setupHooks!foo)
+		return;
 	auto hookFoo = setupHook!foo;
 	
 	assert(foo(3, 5) == 8);
@@ -410,6 +434,8 @@ SetupHook!func setupHook(alias func)() @trusted
 			return a + b + x;
 		}
 	}
+	if (!setupHooks!(C.foo))
+		return;
 	auto hookFoo = setupHook!(C.foo);
 	
 	auto c = new C;
