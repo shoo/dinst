@@ -148,6 +148,18 @@ private:
 	{
 		_original   = where;
 		_hookTarget = target;
+		// _mutex の確保(GCアロケーション)は、実際にバイナリへパッチを
+		// 当てる「前」に行う。
+		//
+		// (これを後回しにすると、`new Mutex` が引き金となってGCの
+		//  遅延初期化(gc_init_nothrow)が走った際、GC自身の初期化処理が
+		//  内部で calloc()/malloc() 等を呼び出すことがあり、その時点で
+		//  既にフック対象の関数がパッチ済みだと、パッチしたばかりの
+		//  関数の呼び出し中にGC初期化処理が再入してしまい、
+		//  "Cannot initialize the garbage collector" で異常終了する。
+		//  free()のシャットダウン時と同様の「GC自身が依存する関数を
+		//  フックする際に生じる、鶏と卵の問題」の別パターンである)
+		_mutex = new Mutex;
 		version (X86)
 		{
 			if (!_createJmp32(where, target))
@@ -169,7 +181,6 @@ private:
 			}
 		}
 		else static assert(0);
-		_mutex = new Mutex;
 		return true;
 	}
 	
@@ -180,18 +191,245 @@ private:
 	}
 }
 
+/*******************************************************************************
+ * フック情報の登録先
+ *
+ * 【背景】GC自身が(druntimeの終了処理 `gc_term()` の中で、自分が
+ * 使っていたメモリプールを解放するために)内部的に `free()`
+ * (場合によっては `malloc`/`calloc`/`realloc` も)を呼び出すことがある。
+ * Windows実機での調査により、これは
+ *   gc_term -> ConservativeGC.__dtor -> Gcx.Dtor -> Pool.Dtor -> free()
+ * という、**GC自身の後始末処理の真っ最中**に発生することが判明した。
+ *
+ * もしフック情報の登録先(従来の `g_hooks`)がGC管理メモリ上の
+ * 連想配列だと、このタイミングで free() 経由の _generalHook!free が
+ * それを参照しようとした際、まさにその参照先のメモリ(GCのプール)が
+ * GC自身によって破棄されている最中であるため、不正なメモリアクセス
+ * (Windowsでは0xC0000005、Linuxでは類似のセグメンテーション違反)を
+ * 起こしてクラッシュする。
+ *
+ * この問題が起こりうるのは、**GC自身が内部で依存している
+ * malloc/free/calloc/realloc をフックした場合に限られる**。
+ * それ以外の通常の関数(D関数や、GCと無関係な任意のC関数)を
+ * フックする分には、このような問題は起こらない。
+ *
+ * そこで、フック情報の登録先を用途に応じて2種類使い分ける:
+ *
+ * - `g_hooks`(連想配列、GC管理メモリ): malloc/free/calloc/realloc
+ *   **以外**の通常の関数用。従来通り、登録数に制限は無い。
+ * - `g_allocatorHookSlots`(固定長配列、GC/malloc/freeいずれにも
+ *   依存しない静的データ領域): malloc/free/calloc/realloc
+ *   **専用**。GCや(フック対象である)アロケータ自体の生存状態に
+ *   関わらず、プログラムの実行中いつでも安全に参照できる。
+ *   これら4関数を同時にすべてフックしても4エントリしか使わないため、
+ *   スロット数はごく小さくてよい。
+ */
 private __gshared HookData[string] g_hooks;
 
-private ReturnType!func _generalHook(alias func)(Parameters!func args)
+/// funcが「GC自身が内部で依存しうる」libcのアロケータ関数かどうか
+/// (core.stdc.stdlib の malloc/free のみが対象)
+///
+/// NOTE: calloc/realloc も同様の理由で対象に加えることを検討したが、
+/// 調査の過程で calloc は「thread_joinAll 経由の別の異なる問題」を
+/// 単独で引き起こすことが分かった(realloc は未検証)。これは
+/// 今回のg_hooks問題とは無関係の、別種の問題であるため、確実に
+/// 動作を確認できている malloc/free のみをこの特別扱いの対象とする。
+private template isCoreAllocatorFunc(alias func)
+{
+	import std.traits : moduleName;
+	static if (__traits(compiles, moduleName!func))
+	{
+		private enum id = __traits(identifier, func);
+		enum bool isCoreAllocatorFunc = moduleName!func == "core.stdc.stdlib" &&
+			(id == "malloc" || id == "free");
+	}
+	else
+	{
+		enum bool isCoreAllocatorFunc = false;
+	}
+}
+
+private enum MAX_ALLOCATOR_HOOKS = 4; // malloc/free程度なので少数で十分
+
+private struct HookSlot
+{
+	string key;
+	HookData data;
+	bool used;
+}
+
+private __gshared HookSlot[MAX_ALLOCATOR_HOOKS] g_allocatorHookSlots;
+private __gshared size_t g_allocatorHookSlotCount = 0;
+
+/// funcに対応するHookDataへのポインタを返す。無ければnull。
+/// (isCoreAllocatorFuncか否かで参照先を自動的に切り替える)
+private HookData* findHook(alias func)() @trusted
+{
+	static if (isCoreAllocatorFunc!func)
+	{
+		foreach (i; 0 .. g_allocatorHookSlotCount)
+		{
+			if (g_allocatorHookSlots[i].used && g_allocatorHookSlots[i].key == func.mangleof)
+				return &g_allocatorHookSlots[i].data;
+		}
+		return null;
+	}
+	else
+	{
+		return func.mangleof in g_hooks;
+	}
+}
+
+/// 新規エントリを追加してそのポインタを返す。
+/// (アロケータ専用スロットが尽きた場合のみnullを返しうる)
+private HookData* insertHook(alias func)() @trusted
+{
+	static if (isCoreAllocatorFunc!func)
+	{
+		if (g_allocatorHookSlotCount >= MAX_ALLOCATOR_HOOKS)
+			return null;
+		auto idx = g_allocatorHookSlotCount++;
+		g_allocatorHookSlots[idx] = HookSlot.init;
+		g_allocatorHookSlots[idx].key = func.mangleof;
+		g_allocatorHookSlots[idx].used = true;
+		return &g_allocatorHookSlots[idx].data;
+	}
+	else
+	{
+		g_hooks[func.mangleof] = HookData.init;
+		return func.mangleof in g_hooks;
+	}
+}
+
+/// エントリを削除する
+private void removeHook(alias func)() @trusted
+{
+	static if (isCoreAllocatorFunc!func)
+	{
+		foreach (i; 0 .. g_allocatorHookSlotCount)
+		{
+			if (g_allocatorHookSlots[i].used && g_allocatorHookSlots[i].key == func.mangleof)
+			{
+				g_allocatorHookSlots[i].used = false;
+				return;
+			}
+		}
+	}
+	else
+	{
+		g_hooks.remove(func.mangleof);
+	}
+}
+
+/*******************************************************************************
+ * 上記フック情報レジストリを保護するスピンロック。
+ * 詳細は FIX_NOTES.md / ISSUE_free_access_violation.md を参照。
+ */
+private shared int g_hooksLock = 0;
+
+private void lockHooks() nothrow @nogc
+{
+	import core.atomic;
+	while (!cas(&g_hooksLock, 0, 1))
+	{
+	}
+}
+
+private void unlockHooks() nothrow @nogc
+{
+	import core.atomic;
+	atomicStore(g_hooksLock, 0);
+}
+
+private ReturnType!func _generalHookImpl(alias func)(Parameters!func args)
 if (!isMethod!func)
 {
-	auto hook = func.mangleof in g_hooks;
-	assert(hook);
-	hook._counter++;
 	alias DgType = ReturnType!func delegate(Parameters!func);
-	if (hook._callback !is null)
-		return (*cast(DgType*)(&hook._callback))(args);
-	return (cast(ReturnType!func function(Parameters!func))hook._trampoline)(args);
+	lockHooks();
+	auto hook = findHook!func();
+	if (hook is null)
+	{
+		unlockHooks();
+		assert(hook);
+	}
+	hook._counter++;
+	bool hasCallback = hook._callback !is null;
+	DgType callback;
+	void* trampoline;
+	if (hasCallback)
+		callback = *cast(DgType*)(&hook._callback);
+	else
+		trampoline = hook._trampoline;
+	unlockHooks();
+
+	if (hasCallback)
+		return callback(args);
+	return (cast(typeof(&func))trampoline)(args);
+}
+
+/*******************************************************************************
+ * `_generalHookImpl!func` を、funcと同じ呼び出し規約(リンケージ)で
+ * 呼び出せるようにラップしたエントリポイント。
+ *
+ * `func`(例えば`extern(C)`の`malloc`/`free`)をフックする際、パッチ後の
+ * `func`はこの関数のアドレスへ直接ジャンプするよう書き換えられる。
+ * つまり、この関数自身が「funcであるかのように」呼び出される。
+ * `_generalHookImpl`をそのまま使うと、それは常にD言語のデフォルトの
+ * 呼び出し規約(extern(D))で宣言された関数になってしまい、
+ * funcの実際の呼び出し規約(例えばCの`cdecl`)と食い違う。
+ * x86_64ではDとCの呼び出し規約がたまたま一致するため問題が
+ * 表面化しないが、32bit x86ではこの食い違いにより引数が正しく
+ * 読み取れず、渡されるはずのポインタが全く別の値になってしまう
+ * (結果としてクラッシュする)。
+ *
+ * ここでは `func` の実際のリンケージ(`std.traits.functionLinkage`)に
+ * 合わせて `extern(...)` を切り替えたラッパー関数を用意することで、
+ * 呼び出し規約を一致させる。`extern(C)`/`extern(Windows)`/`extern(C++)`
+ * のようにDの既定と異なるリンケージの場合は、テンプレートインスタンス
+ * ごとに一意なシンボル名を`pragma(mangle)`で明示的に指定し、
+ * (Cリンケージはテンプレート引数によるマングリングが行われないため)
+ * 複数の関数を同時にフックした際にシンボル名が衝突しないようにしている。
+ */
+private template _generalHookEntry(alias func)
+if (!isMethod!func)
+{
+	import std.traits : functionLinkage;
+	private enum _dinst_ghLinkage = functionLinkage!func;
+	private enum _dinst_ghMangledName = "_dinst_gh_" ~ func.mangleof;
+
+	static if (_dinst_ghLinkage == "C")
+	{
+		pragma(mangle, _dinst_ghMangledName)
+		extern(C) ReturnType!func _generalHookEntry(Parameters!func args)
+		{
+			return _generalHookImpl!func(args);
+		}
+	}
+	else static if (_dinst_ghLinkage == "Windows")
+	{
+		pragma(mangle, _dinst_ghMangledName)
+		extern(Windows) ReturnType!func _generalHookEntry(Parameters!func args)
+		{
+			return _generalHookImpl!func(args);
+		}
+	}
+	else static if (_dinst_ghLinkage == "C++")
+	{
+		pragma(mangle, _dinst_ghMangledName)
+		extern(C++) ReturnType!func _generalHookEntry(Parameters!func args)
+		{
+			return _generalHookImpl!func(args);
+		}
+	}
+	else
+	{
+		// D(デフォルト)。テンプレートインスタンスごとに自動的に
+		// 一意な名前が付くため pragma(mangle) は不要。
+		ReturnType!func _generalHookEntry(Parameters!func args)
+		{
+			return _generalHookImpl!func(args);
+		}
+	}
 }
 
 version (LDC)
@@ -199,13 +437,27 @@ version (LDC)
 	private ReturnType!func _generalHook(alias func)(ParentRef!func parent, Parameters!func args)
 	if (isMethod!func)
 	{
-		auto hook = func.mangleof in g_hooks;
-		assert(hook);
-		hook._counter++;
 		alias DgType = ReturnType!func delegate(ParentRef!func, Parameters!func);
-		if (hook._callback !is null)
-			return (*cast(DgType*)(&hook._callback))(parent, args);
-		return (cast(ReturnType!func function(ParentRef!func, Parameters!func))hook._trampoline)(parent, args);
+		lockHooks();
+		auto hook = findHook!func();
+		if (hook is null)
+		{
+			unlockHooks();
+			assert(hook);
+		}
+		hook._counter++;
+		bool hasCallback = hook._callback !is null;
+		DgType callback;
+		void* trampoline;
+		if (hasCallback)
+			callback = *cast(DgType*)(&hook._callback);
+		else
+			trampoline = hook._trampoline;
+		unlockHooks();
+
+		if (hasCallback)
+			return callback(parent, args);
+		return (cast(ReturnType!func function(ParentRef!func, Parameters!func))trampoline)(parent, args);
 	}
 }
 else
@@ -213,14 +465,34 @@ else
 	private ReturnType!func _generalHook(alias func)(Parameters!func args, ParentRef!func parent)
 	if (isMethod!func)
 	{
-		auto hook = func.mangleof in g_hooks;
-		assert(hook);
-		hook._counter++;
 		alias DgType = ReturnType!func delegate(Parameters!func, ParentRef!func);
-		if (hook._callback !is null)
-			return (*cast(DgType*)(&hook._callback))(args, parent);
-		return (cast(ReturnType!func function(Parameters!func, ParentRef!func))hook._trampoline)(args, parent);
+		lockHooks();
+		auto hook = findHook!func();
+		if (hook is null)
+		{
+			unlockHooks();
+			assert(hook);
+		}
+		hook._counter++;
+		bool hasCallback = hook._callback !is null;
+		DgType callback;
+		void* trampoline;
+		if (hasCallback)
+			callback = *cast(DgType*)(&hook._callback);
+		else
+			trampoline = hook._trampoline;
+		unlockHooks();
+
+		if (hasCallback)
+			return callback(args, parent);
+		return (cast(ReturnType!func function(Parameters!func, ParentRef!func))trampoline)(args, parent);
 	}
+}
+
+private template _generalHookEntry(alias func)
+if (isMethod!func)
+{
+	alias _generalHookEntry = _generalHook!func;
 }
 
 /*******************************************************************************
@@ -228,12 +500,26 @@ else
  */
 bool createHook(alias func)()
 {
-	if (func.mangleof in g_hooks)
+	lockHooks();
+	bool already = (findHook!func()) !is null;
+	HookData* hook;
+	if (already)
+		hook = findHook!func();
+	else
+		hook = insertHook!func();
+	unlockHooks();
+
+	if (already)
 		return true;
-	HookData dat;
-	if (!dat._create(&func, &(_generalHook!func)))
+	if (hook is null)
 		return false;
-	g_hooks[func.mangleof] = dat;
+	if (!hook._create(&func, &(_generalHookEntry!func)))
+	{
+		lockHooks();
+		removeHook!func();
+		unlockHooks();
+		return false;
+	}
 	return true;
 }
 
@@ -243,7 +529,7 @@ bool createHook(alias func)()
 void setHookFunc(alias func)(ReturnType!func delegate(Parameters!func) dg) @trusted
 if (!isMethod!func)
 {
-	auto hook = func.mangleof in g_hooks;
+	auto hook = findHook!func();
 	assert(hook);
 	alias DgType = void delegate();
 	synchronized (hook._mutex)
@@ -253,7 +539,7 @@ if (!isMethod!func)
 void setHookFunc(alias func)(ReturnType!func delegate(ParentRef!func, Parameters!func) dg) @trusted
 if (isMethod!func)
 {
-	auto hook = func.mangleof in g_hooks;
+	auto hook = findHook!func();
 	assert(hook);
 	alias DgType = void delegate();
 	version (LDC)
@@ -283,7 +569,7 @@ if (isMethod!func)
  */
 void clearHookState(alias func)() @trusted
 {
-	auto hook = func.mangleof in g_hooks;
+	auto hook = findHook!func();
 	assert(hook);
 	synchronized (hook._mutex)
 		hook._clearState();
@@ -294,7 +580,7 @@ void clearHookState(alias func)() @trusted
  */
 ReturnType!func callHookOriginal(alias func)(Parameters!func args) @trusted
 {
-	auto hook = func.mangleof in g_hooks;
+	auto hook = findHook!func();
 	assert(hook);
 	alias Fn = ReturnType!func function(Parameters!func);
 	Fn fn;
@@ -319,7 +605,7 @@ private:
 	{
 		if (_mutex)
 			return;
-		auto hook = func.mangleof in g_hooks;
+		auto hook = findHook!func();
 		assert(hook);
 		_mutex = hook._mutex;
 		_mutex.lock();
@@ -332,12 +618,12 @@ public:
 	///
 	bool opCast(T: bool)() const
 	{
-		return cast(bool)(func.mangleof in g_hooks);
+		return cast(bool)(findHook!func());
 	}
 	///
 	~this() @trusted
 	{
-		if (func.mangleof in g_hooks)
+		if (findHook!func())
 		{
 			clearHookState!func();
 			if (_mutex)

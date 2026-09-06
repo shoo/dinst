@@ -326,6 +326,16 @@ void integrationTest(string[] exDubOpts = null)
 			}
 			return !(buildOpts.length == 0 && testOpts.length == 0 && runOpts.length == 0);
 		}
+		else if (entry.endsWith(".script.d"))
+		{
+			// dub
+			dispLog("INFO", entry.baseName, "dub single script test");
+			auto dmdMachineTarget = config.arch == "x86" ? "-a=x86" : "-a=x86_64";
+			exec(["dub", "run", dmdMachineTarget, "-b=cov", "--root=" ~ projDir,
+				"--temp-build", "--compiler", config.compiler,
+				"--single", entry, "--"] ~ covopt, projDir, env);
+			return true;
+		}
 		else switch (entry.extension)
 		{
 		case ".d":
