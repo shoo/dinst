@@ -220,17 +220,10 @@ jobs:
         uses: dlang-community/setup-dlang@v2
         with:
           compiler: dmd-latest
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: 'npm'
-          cache-dependency-path: '.gendoc/package-lock.json'
       - name: Run unit tests
         run: rdmd ./scripts/runner.d -a=x86_64 --mode=unit-test
       - name: Build tests
         run: rdmd ./scripts/runner.d -a=x86_64 --mode=release-build
-      - name: Build webui
-        run: cd .gendoc && npm ci && npm run build
       - name: Generate document tests
         run: rdmd ./scripts/runner.d -a=x86_64 --mode=generate-document
       - name: Upload generated pages
@@ -305,9 +298,9 @@ jobs:
 
   # No. OS      ARCH    COMPILER   UT  TT  BLD DOC COV
   # 21. macOS   x86_64  dmd        o   o   x   x   o
-  test-macos13-x86_64-dmd-latest:
-    name: test-macos13-x86_64-dmd-latest
-    runs-on: macos-13
+  test-macos-x86_64-dmd-latest:
+    name: test-macos-x86_64-dmd-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install D compiler
@@ -321,16 +314,16 @@ jobs:
       - name: Upload coverage result
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-macos13
+          name: coverage-macos
           path: .cov
           include-hidden-files: true
 
 
   # No. OS      ARCH    COMPILER   UT  TT  BLD DOC COV
   # 22. macOS   x86_64  ldc        o   x   o   o   x
-  test-macos13-x86_64-ldc-latest:
-    name: test-macos13-x86_64-ldc-latest
-    runs-on: macos-13
+  test-macos-x86_64-ldc-latest:
+    name: test-macos-x86_64-ldc-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install D compiler
@@ -355,7 +348,7 @@ jobs:
   # Upload coverage to Codecov
   upload-codecov:
     name: upload-codecov
-    needs: [test-windows-x86-dmd-latest, test-windows-x86-ldc-latest, test-windows-x86_64-dmd-latest, test-windows-x86_64-ldc-latest, test-windows-x86_64-ldc-master, test-linux-x86-ldc-latest, test-linux-x86_64-dmd-latest, test-linux-x86_64-ldc-latest, test-linux-x86_64-dmd-master, test-macos13-x86_64-dmd-latest, test-macos13-x86_64-ldc-latest]
+    needs: [test-windows-x86-dmd-latest, test-windows-x86-ldc-latest, test-windows-x86_64-dmd-latest, test-windows-x86_64-ldc-latest, test-windows-x86_64-ldc-master, test-linux-x86-ldc-latest, test-linux-x86_64-dmd-latest, test-linux-x86_64-ldc-latest, test-linux-x86_64-dmd-master, test-macos-x86_64-dmd-latest, test-macos-x86_64-ldc-latest]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -376,7 +369,7 @@ jobs:
       - name: Download coverage result
         uses: actions/download-artifact@v4
         with:
-          name: coverage-macos13
-          path: coverage-macos13
+          name: coverage-macos
+          path: coverage-macos
       - name: Upload coverage to Codecov
-        run: bash <(curl -s https://codecov.io/bash) -t ${{ secrets.CODECOV_TOKEN }} -s coverage-macos13
+        run: bash <(curl -s https://codecov.io/bash) -t ${{ secrets.CODECOV_TOKEN }} -s coverage-macos
