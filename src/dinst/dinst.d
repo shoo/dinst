@@ -364,6 +364,16 @@ if (!isMethod!func)
 
 	if (hasCallback)
 		return callback(args);
+	// NOTE: ここは trampoline 経由で元の関数(funcそのもの、あるいは
+	// funcの続き)を呼び出す箇所。`ReturnType!func function(Parameters!func)`
+	// という素朴な関数ポインタ型は常にD言語のデフォルトの呼び出し規約
+	// (extern(D))になってしまい、funcが`extern(C)`(malloc/freeなどの
+	// Cライブラリ関数)の場合、実際の呼び出し規約と食い違ってしまう。
+	// x86_64ではDとCの呼び出し規約がたまたま一致するため問題が
+	// 表面化しないが、32bit x86ではDのextern(D)とCのcdeclで引数の
+	// 扱いが異なり、引数が正しく渡らずクラッシュする原因になっていた。
+	// `typeof(&func)` を使うことで、funcが実際に宣言されている
+	// リンケージ(extern(C)ならextern(C))をそのまま引き継ぐ。
 	return (cast(typeof(&func))trampoline)(args);
 }
 
@@ -489,6 +499,10 @@ else
 	}
 }
 
+// メソッド(クラス/構造体のメンバ関数)は常にD言語のABIで呼び出されるため、
+// extern(C)等のリンケージ食い違いの問題は起こらない。createHook()から
+// 統一的に `_generalHookEntry!func` の形で参照できるよう、既存の
+// `_generalHook!func`(メソッド版)へそのままエイリアスする。
 private template _generalHookEntry(alias func)
 if (isMethod!func)
 {
@@ -506,13 +520,30 @@ bool createHook(alias func)()
 	if (already)
 		hook = findHook!func();
 	else
+		// _generalHook!func はこのフック情報を参照する。
+		// そのため、実際にバイナリへパッチを当てる「前」に登録を
+		// 完了させておく必要がある。
+		//
+		// (以前は「パッチを当ててから登録する」という順序だったため、
+		//  パッチ直後・登録前の一瞬の間に何らかの経路(druntime自身の内部処理など)
+		//  で func が呼び出されると、_generalHook!func 内の `assert(hook)` が
+		//  失敗していた。よりによって free() のようにランタイム自身が内部で
+		//  依存している関数をフックした場合にこれが起こりやすく、
+		//  パッチしたばかりの重要な関数の呼び出し中に異常終了するため、
+		//  Windowsではアクセス違反として観測されることがある)
 		hook = insertHook!func();
 	unlockHooks();
 
 	if (already)
 		return true;
 	if (hook is null)
-		return false;
+		return false; // MAX_HOOKS に達した
+
+	// NOTE: hook._create() はここではロックを保持しない状態で呼び出す。
+	// _create() の内部(determineStolenBytesが使うcapstoneの内部処理など)が
+	// 別の、既にフック済みの関数を間接的に呼び出す可能性があり、
+	// その場合 _generalHook 側でも同じロックを取得しようとするため、
+	// ここでロックを保持したままだと自己デッドロックしてしまう。
 	if (!hook._create(&func, &(_generalHookEntry!func)))
 	{
 		lockHooks();
@@ -582,10 +613,17 @@ ReturnType!func callHookOriginal(alias func)(Parameters!func args) @trusted
 {
 	auto hook = findHook!func();
 	assert(hook);
-	alias Fn = ReturnType!func function(Parameters!func);
-	Fn fn;
+	// NOTE: _generalHookImpl 内のトランポリン呼び出しと同じ理由により、
+	// `ReturnType!func function(Parameters!func)` という素朴な関数
+	// ポインタ型(常にD言語のデフォルトのリンケージになる)ではなく
+	// `typeof(&func)` を使い、funcの実際のリンケージ(extern(C)なら
+	// extern(C))をそのまま引き継ぐ。x86_64ではDとCの呼び出し規約が
+	// たまたま一致するため問題が表面化しないが、32bit x86では
+	// これを怠ると引数が正しく渡らず、ヒープ破壊(不正なポインタでの
+	// free()呼び出し等)を引き起こす。
+	typeof(&func) fn;
 	synchronized (hook._mutex)
-		fn = cast(Fn)hook._trampoline;
+		fn = cast(typeof(&func))hook._trampoline;
 	return fn(args);
 }
 

@@ -10,6 +10,8 @@ import dinst;
 
 void main()
 {
+	if (!isSupported)
+		return;
 	auto hook = setupHook!free;
 	static int pass;
 	hook.hook(delegate (void* ptr) {
