@@ -110,7 +110,11 @@ bool writeRelJump(void* where, void* target)
 			return false;
 		auto rel32 = cast(int)rel64;
 	}
-	else return false;
+	else
+	{
+		int rel32;
+		return false;
+	}
 
 	union Dat
 	{
