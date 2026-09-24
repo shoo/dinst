@@ -672,6 +672,7 @@ public:
 				_mutex.unlock();
 	writeln("TEST 2 - 4");
 		}
+	writeln("TEST 2 - 5");
 	}
 	///
 	ReturnType!func callOrig(Parameters!func args) @safe
