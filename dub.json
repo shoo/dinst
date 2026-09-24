@@ -25,5 +25,5 @@
 	"preBuildCommands-windows-x86_64": [ "rdmd -m64 scripts/prebuild.d" ],
 	"preBuildCommands-linux-x86":      [ "rdmd -m32 scripts/prebuild.d" ],
 	"preBuildCommands-linux-x86_64":   [ "rdmd -m64 scripts/prebuild.d" ],
-	"preBuildCommands-osx-x86_64":     [ "rdmd -m64 scripts/prebuild.d" ]
+	"preBuildCommands-osx-x86_64":     [ "rdmd -target=x86_64-apple-macos scripts/prebuild.d" ]
 }
