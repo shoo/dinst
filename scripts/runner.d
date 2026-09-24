@@ -332,7 +332,7 @@ void integrationTest(string[] exDubOpts = null)
 			dispLog("INFO", entry.baseName, "dub single script test");
 			auto dmdMachineTarget = config.arch == "x86" ? "-a=x86" : "-a=x86_64";
 			exec(["dub", "run", dmdMachineTarget, "-b=cov", "--root=" ~ projDir,
-				"--temp-build", "--compiler", config.compiler,
+				"--compiler", config.compiler,
 				"--single", entry, "--"] ~ covopt, projDir, env);
 			return true;
 		}
