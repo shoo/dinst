@@ -5,7 +5,6 @@ import core.stdc.stdint : uint8_t, uint16_t, uint64_t;
 extern(C):
 
 alias csh = size_t;
-alias cs_detail = int;
 
 /// cs_err enum
 enum cs_err : int {
@@ -166,4 +165,102 @@ size_t cs_disasm(csh handle,
                  cs_insn** insn);
 void cs_free(cs_insn* insn, size_t count);
 cs_err cs_close(csh* handle);
+/// レジスタIDから名前を取得する(例: "rip")。CS_OPT_DETAILがONの場合のみ有効な値を返す。
+const(char)* cs_reg_name(csh handle, uint reg_id);
+
+
+// ------------------------------------------------------------------------
+// x86命令の詳細情報 (CS_OPT_DETAIL を ON にした場合のみ cs_insn.detail 経由で取得できる)
+//
+// capstone本体(C言語)の `include/capstone/x86.h` / `capstone.h` の構造体定義
+// (capstone 5.0.6, x86_64 Linux/Windows ABI) にバイナリレイアウトを合わせてある。
+// 本プロジェクトは CS_ARCH_X86 でしか capstone を初期化しないため、
+// cs_detail 内の実際のunion(各アーキテクチャ共通)はx86部分のみを素朴なフィールドとして
+// 定義している(他アーキテクチャの詳細構造体もいずれも8バイトアライメントのため、
+// レイアウト上の実害はない)。
+// ------------------------------------------------------------------------
+
+/// オペランド種別
+enum x86_op_type : int {
+	X86_OP_INVALID = 0,
+	X86_OP_REG = 1,
+	X86_OP_IMM = 2,
+	X86_OP_MEM = 3,
+}
+
+/// レジスタ番号。実際の値は使わず、cs_reg_name() で名前を取得して判定する。
+alias x86_reg = int;
+enum x86_reg X86_REG_INVALID = 0;
+
+/// メモリオペランド (例: `jmp qword ptr [rip+disp32]` の `[rip+disp32]` 部分)
+struct x86_op_mem {
+	x86_reg segment;
+	x86_reg base;
+	x86_reg index;
+	int scale;
+	long disp;
+}
+
+/// 1つのオペランド
+struct cs_x86_op {
+	x86_op_type type;
+	union {
+		x86_reg reg;
+		long imm;
+		x86_op_mem mem;
+	}
+	uint8_t size;
+	uint8_t access;
+	int avx_bcast;
+	bool avx_zero_opmask;
+}
+
+/// エンコーディング情報 (今回は未使用だがレイアウト維持のため定義)
+struct cs_x86_encoding {
+	uint8_t modrm_offset;
+	uint8_t disp_offset;
+	uint8_t disp_size;
+	uint8_t imm_offset;
+	uint8_t imm_size;
+}
+
+/// x86命令の詳細
+struct cs_x86 {
+	uint8_t[4] prefix;
+	uint8_t[4] opcode;
+	uint8_t rex;
+	uint8_t addr_size;
+	uint8_t modrm;
+	uint8_t sib;
+	long disp;
+	x86_reg sib_index;
+	byte sib_scale;
+	x86_reg sib_base;
+	int xop_cc;
+	int sse_cc;
+	int avx_cc;
+	bool avx_sae;
+	int avx_rm;
+	union {
+		ulong eflags;
+		ulong fpu_flags;
+	}
+	uint8_t op_count;
+	cs_x86_op[8] operands;
+	cs_x86_encoding encoding;
+}
+
+/// 命令の詳細情報 (cs_insn.detail が指す先)
+/// NOTE: 実際のcapstoneの定義は他アーキテクチャの詳細構造体とのunionだが、
+/// 本プロジェクトはx86しか使わないためx86部分のみをフィールドとして直接展開する。
+struct cs_detail {
+	ushort[20] regs_read;
+	uint8_t regs_read_count;
+	ushort[20] regs_write;
+	uint8_t regs_write_count;
+	uint8_t[8] groups;
+	uint8_t groups_count;
+	bool writeback;
+	cs_x86 x86;
+}
 

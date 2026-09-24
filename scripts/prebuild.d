@@ -196,10 +196,15 @@ void build()
 				"-DCMAKE_C_FLAGS=-m32", "-DCMAKE_CXX_FLAGS=-m32",
 				"-DCMAKE_EXE_LINKER_FLAGS=-m32", "-DCMAKE_SHARED_LINKER_FLAGS=-m32",
 				"-DCMAKE_BUILD_TYPE=Release", "-DCAPSTONE_BUILD_TESTS=Off", "-DCAPSTONE_BUILD_CSTOOL=Off"];
-		else static if (isX86_64)
+		else static if (isLinux && isX86_64)
 			args = ["cmake", "-B", tmpDir.buildPath("build"), tmpDir.buildPath(capstoneSrcDir),
 				"-DCMAKE_C_FLAGS=-m64", "-DCMAKE_CXX_FLAGS=-m64",
 				"-DCMAKE_EXE_LINKER_FLAGS=-m64", "-DCMAKE_SHARED_LINKER_FLAGS=-m64",
+				"-DCMAKE_BUILD_TYPE=Release", "-DCAPSTONE_BUILD_TESTS=Off", "-DCAPSTONE_BUILD_CSTOOL=Off"];
+		else static if (isMacos && isX86_64)
+			args = ["cmake", "-B", tmpDir.buildPath("build"), tmpDir.buildPath(capstoneSrcDir),
+				"-DCMAKE_C_FLAGS=-arch x86_64", "-DCMAKE_CXX_FLAGS=-arch x86_64",
+				"-DCMAKE_EXE_LINKER_FLAGS=-arch x86_64", "-DCMAKE_SHARED_LINKER_FLAGS=-arch x86_64",
 				"-DCMAKE_BUILD_TYPE=Release", "-DCAPSTONE_BUILD_TESTS=Off", "-DCAPSTONE_BUILD_CSTOOL=Off"];
 		else static if (isLinux && isAArch64)
 			args = ["cmake", "-B", tmpDir.buildPath("build"), tmpDir.buildPath(capstoneSrcDir),
@@ -214,6 +219,7 @@ void build()
 				"-DCMAKE_EXE_LINKER_FLAGS=-arch arm64", "-DCMAKE_SHARED_LINKER_FLAGS=-arch arm64",
 				"-DCMAKE_BUILD_TYPE=Release", "-DCAPSTONE_BUILD_TESTS=Off", "-DCAPSTONE_BUILD_CSTOOL=Off"];
 		else static assert(0);
+		import std.stdio; writeln("------------- args -------------"); writeln(args); writeln("-----"); stdout.flush();
 		builtLib = targetLibName;
 	}
 	
