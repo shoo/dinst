@@ -219,6 +219,7 @@ void build()
 				"-DCMAKE_EXE_LINKER_FLAGS=-arch arm64", "-DCMAKE_SHARED_LINKER_FLAGS=-arch arm64",
 				"-DCMAKE_BUILD_TYPE=Release", "-DCAPSTONE_BUILD_TESTS=Off", "-DCAPSTONE_BUILD_CSTOOL=Off"];
 		else static assert(0);
+		import std.stdio; writeln("-------------- args --------------"); writeln(args); writeln("-----");
 		builtLib = targetLibName;
 	}
 	

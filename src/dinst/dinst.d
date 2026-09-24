@@ -661,11 +661,16 @@ public:
 	///
 	~this() @trusted
 	{
+	import std.stdio;
+	writeln("TEST 2 - 1");
 		if (findHook!func())
 		{
+	writeln("TEST 2 - 2");
 			clearHookState!func();
+	writeln("TEST 2 - 3");
 			if (_mutex)
 				_mutex.unlock();
+	writeln("TEST 2 - 4");
 		}
 	}
 	///
