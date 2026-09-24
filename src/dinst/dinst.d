@@ -139,7 +139,7 @@ private:
 			if (!writeRelJump(where, target))
 				return false;
 		}
-		else static assert(0);
+		else return false;
 		
 		return true;
 	}
@@ -180,7 +180,7 @@ private:
 					return false;
 			}
 		}
-		else static assert(0);
+		else return false;
 		return true;
 	}
 	
